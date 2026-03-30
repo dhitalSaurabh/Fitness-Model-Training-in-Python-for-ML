@@ -1,0 +1,21 @@
+import numpy as np
+arr = np.array([[[1,2,3], [4,5,6], [7,8,9], [10,11,12]]])
+print("Array:", arr)
+print("Sum:", np.sum(arr))
+print("Mean:", np.mean(arr))
+print("Max:", np.max(arr))
+print("Min:", np.min(arr))
+print("Standard Deviation:", np.std(arr))
+print("Shape:", arr.shape)
+# print("Reshaped Array:\n", arr.reshape((5,1)))
+print("Sliced Array:", arr[1:4])
+print("Array after adding 10:", arr + 10)
+print("Array after multiplying by 2:", arr * 2)
+print("Type",type(arr))
+print("Data Type:", arr.dtype)
+print("length", len(arr))
+print("last element", arr[-1, -1, -1])
+
+# Slicing example
+print("Sliced part of the array:", arr[:, 1:3, 0:2])
+print("Sliced part of the array:", arr[ -3:-2, :])

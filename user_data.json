@@ -1,0 +1,60 @@
+{
+  "message": "User Details Retrieved Successfully",
+  "data": [
+    {
+      "measurements": [
+        {
+          "id": 1,
+          "height_cm": 180,
+          "weight_kg": 75,
+          "bmi": 23.15,
+          "body_fat_percent": 18.5,
+          "muscle_mass_kg": 60.2,
+          "age": 28,
+          "sex": "male",
+          "measurement_method": "manual",
+          "measured_at": "2026-03-27T12:00:00Z"
+        }
+      ],
+      "goals": [
+        {
+          "id": 0,
+          "goal_type": "fat_loss",
+          "target_weight_kg": 0,
+          "target_body_fat_percent": 0,
+          "target_muscle_mass_kg": 0,
+          "intensity_level": "slow",
+          "target_date": "2026-03-27",
+          "is_active": true,
+          "created_at": "2026-03-27T14:57:30.319Z",
+          "updated_at": "2026-03-27T14:57:30.319Z"
+        }
+      ],
+      "lifestyle": [
+        {
+          "id": 0,
+          "diet_type": "string",
+          "meals_per_day": 0,
+          "daily_calorie_intake": 0,
+          "is_vegetarian": true,
+          "is_vegan": true,
+          "is_gluten_free": true,
+          "is_dairy_free": true,
+          "food_allergies": "string",
+          "sleep_hours": 0,
+          "preferred_sleep_time": "2026-03-27T14:57:30.319Z",
+          "preferred_wake_time": "2026-03-27T14:57:30.319Z",
+          "water_intake_liters": 0,
+          "activity_level": "string",
+          "exercise_days_per_week": 0,
+          "preferred_workout_time": "string",
+          "workout_duration_mins": 0,
+          "medical_conditions": "string",
+          "physical_limitations": "string",
+          "created_at": "2026-03-27T14:57:30.319Z",
+          "updated_at": "2026-03-27T14:57:30.319Z"
+        }
+      ]
+    }
+  ]
+}

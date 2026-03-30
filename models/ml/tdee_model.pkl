@@ -1,0 +1,9 @@
+from ml.tdee import calculate_bmr, calculate_tdee, calculate_target_calories
+
+measurement = user.body_metrics[-1]  # latest measurement
+lifestyle = user.lifestyle
+goal = user.goals[0]
+
+bmr = calculate_bmr(measurement.weight_kg, measurement.height_cm, measurement.age, measurement.sex)
+tdee = calculate_tdee(bmr, lifestyle.activity_level)
+target_calories = calculate_target_calories(tdee, goal.goal_type)
