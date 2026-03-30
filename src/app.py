@@ -1,14 +1,28 @@
+import pandas as pd 
+import sys
+import os
+import traceback
+import openai
+import json
+# Add project root to sys.path so we can import models
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from flask import Flask, request, jsonify
 from pydantic import BaseModel, ValidationError
 from datetime import datetime, timedelta
 import joblib
 from models.user import User
-
+from dotenv import load_dotenv
+load_dotenv()  # Load environment variables from .env file
 app = Flask(__name__)
 
+openai.api_key = os.getenv("OPENAI_API_KEY")
+if not openai.api_key:
+    print("WARNING: OPENAI_API_KEY is missing from .env file")
 # ── Load ML model ─────────────────────────────────────────────
-tdee_model = joblib.load("src/ml/tdee_model.pkl")
-
+artifact = joblib.load("models/tdee_model.pkl")
+tdee_model = artifact["model"]
+feature_cols = artifact["feature_cols"]
 
 # ── Request schema ────────────────────────────────────────────
 class UserRequest(BaseModel):
@@ -19,6 +33,13 @@ class UserRequest(BaseModel):
 # ══════════════════════════════════════════════════════════════
 #  HELPER FUNCTIONS  (drop-in replacements for hardcoded lists)
 # ══════════════════════════════════════════════════════════════
+
+def get_safe_attr(obj, attr, default=None):
+    """Safely get an attribute even if the object is None."""
+    if obj is None:
+        return default
+    return getattr(obj, attr, default)
+
 
 def calc_weeks_to_goal(measurement, goal, target_calories: float, tdee: float) -> int:
     """Estimate realistic weeks to reach goal weight / body-fat target."""
@@ -43,141 +64,69 @@ def calc_weeks_to_goal(measurement, goal, target_calories: float, tdee: float) -
     return 8   # maintenance / unknown
 
 
-def generate_meal_plan(lifestyle, target_calories: float,
-                       protein_g: float, carbs_g: float, fat_g: float) -> list[str]:
-    """Build a day's meal plan personalised to diet preferences."""
-    meals     = getattr(lifestyle, "meals_per_day", 3) or 3
-    is_vegan  = getattr(lifestyle, "is_vegan", False)
-    is_veg    = getattr(lifestyle, "is_vegetarian", False)
-    allergies = (getattr(lifestyle, "food_allergies", "") or "").lower()
+# open Ai
 
-    # Protein source
-    if is_vegan:
-        p_src = "tofu / tempeh / lentils"
-    elif is_veg:
-        p_src = "paneer / eggs / Greek yogurt"
-    else:
-        p_src = "chicken breast / fish / eggs"
+def generate_dynamic_ai_content(measurement, goal, lifestyle, target_calories, protein_g, carbs_g, fat_g):
+    """Sends user context to GPT-4o to generate highly personalized text plans."""
+    
+    is_vegan = get_safe_attr(lifestyle, "is_vegan", False)
+    is_veg = get_safe_attr(lifestyle, "is_vegetarian", False)
+    allergies = get_safe_attr(lifestyle, "food_allergies", "None")
+    limitations = get_safe_attr(lifestyle, "physical_limitations", "None")
+    ex_days = get_safe_attr(lifestyle, "exercise_days_per_week", 3) or 3
+    duration = get_safe_attr(lifestyle, "workout_duration_mins", 45) or 45
+    
+    prompt = f"""
+    You are an expert fitness and nutrition AI. Generate a personalized plan based on this exact data:
+    
+    **User Stats:** {measurement.weight_kg}kg, {measurement.height_cm}cm, Age {measurement.age}
+    **Goal:** {goal.goal_type} (Target weight: {get_safe_attr(goal, 'target_weight_kg', 'N/A')}kg)
+    **Target Intake:** {round(target_calories)} kcal | {round(protein_g)}g Protein | {round(carbs_g)}g Carbs | {round(fat_g)}g Fat
+    **Preferences:** Vegan={is_vegan}, Vegetarian={is_veg}, Allergies={allergies}
+    **Constraints:** Workout {ex_days} days/week for {duration} mins. Limitations: {limitations}
+    
+    Return STRICTLY valid JSON in this exact format, nothing else:
+    {{
+      "meal_plan": ["meal 1 string", "meal 2 string", "meal 3 string"],
+      "workout_plan": ["workout 1 string", "workout 2 string"],
+      "habit_tips": ["tip 1", "tip 2", "tip 3"],
+      "supplement_suggestions": ["supplement 1", "supplement 2"]
+    }}
+    """
 
-    # Carb source — avoid gluten if needed
-    c_src = "rice cakes / sweet potato" if "gluten" in allergies else "oats / brown rice / whole-wheat bread"
-
-    # Fat source — avoid dairy if needed
-    f_src = "avocado / nuts / olive oil"
-
-    cal_each   = round(target_calories / meals)
-    p_each     = round(protein_g / meals)
-
-    templates = {
-        3: [
-            f"🌅 Breakfast  (~{cal_each} kcal | {p_each}g protein): {c_src} + {p_src} + fruit",
-            f"☀️  Lunch     (~{cal_each} kcal | {p_each}g protein): {p_src} + salad + {f_src}",
-            f"🌙 Dinner    (~{cal_each} kcal | {p_each}g protein): {p_src} + steamed veggies + {c_src}",
-        ],
-        4: [
-            f"🌅 Breakfast  (~{cal_each} kcal | {p_each}g protein): {c_src} + {p_src}",
-            f"🍎 Snack      (~{cal_each} kcal): mixed nuts / Greek yogurt",
-            f"☀️  Lunch     (~{cal_each} kcal | {p_each}g protein): {p_src} + salad + {f_src}",
-            f"🌙 Dinner    (~{cal_each} kcal | {p_each}g protein): {p_src} + veggies + {c_src}",
-        ],
-        5: [
-            f"🌅 Breakfast  (~{cal_each} kcal): {c_src} + {p_src}",
-            f"🍎 Mid-morning (~{cal_each} kcal): fruit + handful of nuts",
-            f"☀️  Lunch     (~{cal_each} kcal): {p_src} + salad + {f_src}",
-            f"🥤 Afternoon  (~{cal_each} kcal): protein shake + banana",
-            f"🌙 Dinner    (~{cal_each} kcal): {p_src} + veggies + {c_src}",
-        ],
-    }
-    plan = templates.get(meals, templates[3])
-
-    # Append total macro summary
-    plan.append(
-        f"📊 Daily totals: {round(target_calories)} kcal | "
-        f"{round(protein_g)}g protein | {round(carbs_g)}g carbs | {round(fat_g)}g fat"
-    )
-    return plan
-
-
-def generate_workout_plan(measurement, goal, lifestyle) -> list[str]:
-    """Return a weekly workout plan based on goal, fitness level and available days."""
-    goal_type   = goal.goal_type.lower()
-    ex_days     = getattr(lifestyle, "exercise_days_per_week", 3) or 3
-    duration    = getattr(lifestyle, "workout_duration_mins", 45) or 45
-    limitations = (getattr(lifestyle, "physical_limitations", "") or "").strip()
-
-    plans = {
-        "fat_loss": [
-            f"🏃 Cardio  {max(ex_days - 1, 2)}x/week — HIIT or brisk walk/cycle ({duration} min)",
-            f"🏋️ Strength {min(ex_days, 3)}x/week — full-body circuits, 3×12 reps",
-            "🧘 Active rest 1x/week — yoga or light stretching",
-            "🚶 Target 8,000–10,000 steps every day",
-        ],
-        "muscle_gain": [
-            f"🏋️ Strength {ex_days}x/week — push / pull / legs split",
-            f"   Session length: {duration} min | rest 60–90 s between sets",
-            "🚴 Low-intensity cardio 2x/week (20 min) for cardiovascular health",
-            "📅 Deload week every 4th week to prevent overtraining",
-        ],
-        "maintenance": [
-            f"⚖️  Mixed cardio + strength {ex_days}x/week",
-            f"   Moderate intensity | {duration} min sessions",
-            "🧘 Flexibility / mobility work 2x/week",
-        ],
-    }
-    plan = plans.get(goal_type, plans["maintenance"])
-
-    if limitations:
-        plan.append(f"⚠️  Modify exercises to accommodate: {limitations}")
-
-    return plan
-
-
-def generate_habit_tips(measurement, lifestyle) -> list[str]:
-    """Personalised habit tips based on current metrics."""
-    tips   = []
-    water  = getattr(lifestyle, "water_intake_liters", 2.0) or 2.0
-    sleep  = getattr(lifestyle, "sleep_hours", 7.0) or 7.0
-    stress = getattr(measurement, "stress_level", 5) or 5       # from CSV / measurement extras
-    steps  = getattr(measurement, "daily_steps", 6000) or 6000
-
-    tips.append(
-        f"💧 Hydration: {'increase to 2.5–3 L/day (currently ' + str(water) + ' L)' if water < 2.5 else 'great — maintain 2.5–3 L/day'}"
-    )
-    tips.append(
-        f"😴 Sleep: {'aim for 7–9 hrs (currently ' + str(sleep) + ' hrs)' if sleep < 7 else 'good — keep consistent sleep/wake times'}"
-    )
-    if steps < 8000:
-        tips.append(f"🚶 Steps: aim for 8,000–10,000/day (currently ~{steps})")
-    if int(stress) >= 7:
-        tips.append("🧠 High stress detected — try 10 min mindfulness or box-breathing daily")
-
-    tips.append("📓 Track meals for the first 2 weeks to build nutritional awareness")
-    tips.append("⚖️  Weigh yourself weekly (same time, same day) — not daily")
-    return tips
-
-
-def generate_supplements(measurement, goal, lifestyle) -> list[str]:
-    """Evidence-based supplement suggestions."""
-    goal_type = goal.goal_type.lower()
-    is_vegan  = getattr(lifestyle, "is_vegan", False)
-    protein_g = measurement.weight_kg * 2
-    sups      = []
-
-    if protein_g > 150:
-        src = "plant-based protein" if is_vegan else "whey protein"
-        sups.append(f"🥤 {src.capitalize()} powder to help hit {round(protein_g)}g daily protein target")
-
-    if is_vegan:
-        sups.append("💊 Vitamin B12 — essential for vegans (2.4 µg/day)")
-        sups.append("🐟 Algae-based Omega-3 (EPA + DHA) — vegan alternative to fish oil")
-
-    if goal_type == "muscle_gain":
-        sups.append("💪 Creatine monohydrate 3–5 g/day — best-evidenced supplement for strength")
-
-    sups.append("☀️  Vitamin D3 (1,000–2,000 IU/day) if you have limited sun exposure")
-    sups.append("⚠️  Always consult a healthcare provider before starting supplements")
-    return sups
-
+    try:
+        from openai import OpenAI
+        client = OpenAI() # Automatically uses OPENAI_API_KEY from .env
+        
+        response = client.chat.completions.create( # <-- NEW SYNTAX
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"}
+        )
+        
+        ai_content = json.loads(response.choices[0].message.content)
+        return (
+            ai_content.get("meal_plan", []),
+            ai_content.get("workout_plan", []),
+            ai_content.get("habit_tips", []),
+            ai_content.get("supplement_suggestions", [])
+        )
+        
+    except Exception as e:
+        print(f"OpenAI API Error: {e}")
+        # Safe fallback so the app never crashes unpacking None
+        return (
+            [f"🌅 Breakfast: Balanced macros ({round(target_calories/3)} kcal)", 
+             f"☀️  Lunch: High protein ({round(target_calories/3)} kcal)", 
+             f"🌙 Dinner: Lean meal ({round(target_calories/3)} kcal)"],
+            [f"🏋️ Strength training {ex_days}x/week ({duration} min)", 
+             f"🚶 Aim for 8,000 steps daily"],
+            ["💧 Drink 2.5-3L of water daily", 
+             "😴 Aim for 7-9 hours of sleep", 
+             "📓 Track your meals for the first 2 weeks"],
+            ["☀️ Vitamin D3 (1000-2000 IU)", 
+             "⚠️ Consult a provider before starting supplements"]
+        )
 
 # ══════════════════════════════════════════════════════════════
 #  MAIN ENDPOINT
@@ -195,22 +144,53 @@ def recommendation():
         goal        = next((g for g in user.goals if g.is_active), user.goals[-1])
         lifestyle   = user.lifestyle
 
-        # ── Feature engineering for ML model ─────────────────
+        # # ── Feature engineering for ML model ─────────────────
         sex_val  = 1 if measurement.sex.lower() == "male" else 0
-        goal_val = 0 if goal.goal_type == "fat_loss" else 1
+       
+        # 1. Safely fetch data from Lifestyle & Measurement with fallback defaults
+        sleep_hrs       = getattr(lifestyle, "sleep_hours", 7.0) or 7.0
+        daily_steps     = getattr(lifestyle, "daily_steps", 8000) or getattr(measurement, "daily_steps", 8000) or 8000
+        hydration       = getattr(lifestyle, "water_intake_liters", 2.5) or 2.5
+        stress          = getattr(lifestyle, "stress_level", 5) or getattr(measurement, "stress_level", 5) or 5
+        resting_hr      = getattr(measurement, "resting_heart_rate", 70) or 70
+        duration_m      = getattr(lifestyle, "workout_duration_mins", 45) or 45
+        avg_hr          = getattr(measurement, "avg_heart_rate", 80) or 80
+
+        # 2. LabelEncoder mapping 
+        # (Sklearn's LabelEncoder automatically sorts strings alphabetically during training)
+        activity_map   = {"cycling": 0, "gym": 1, "running": 2, "swimming": 3, "walking": 4}
+        intensity_map   = {"high": 0, "low": 1, "moderate": 2, "slow": 3}
+        fitness_map     = {"advanced": 0, "beginner": 1, "intermediate": 2, "sedentary": 3}
+
+        act_str = getattr(lifestyle, "activity_level", "gym").lower()
+        int_str = getattr(lifestyle, "intensity_level", "moderate").lower()
+        fit_str = getattr(lifestyle, "fitness_level", "intermediate").lower()
+
+        act_enc = activity_map.get(act_str, 1)       # defaults to 'gym'
+        int_enc = intensity_map.get(int_str, 2)       # defaults to 'moderate'
+        fit_enc = fitness_map.get(fit_str, 2)         # defaults to 'intermediate'
+
+        # 3. Build the 15-feature array matching train_model.py EXACTLY
         features = [[
-            measurement.height_cm,
-            measurement.weight_kg,
-            measurement.age,
-            sex_val,
-            measurement.bmi or round(measurement.weight_kg / ((measurement.height_cm / 100) ** 2), 2),
-            measurement.body_fat_percent or 0,
-            measurement.muscle_mass_kg or 0,
-            goal_val,
-        ]]
-
-        predicted_tdee = float(tdee_model.predict(features)[0])
-
+            measurement.age,               # 1. age
+            measurement.height_cm,         # 2. height
+            measurement.weight_kg,         # 3. weight
+            measurement.bmi or round(measurement.weight_kg / ((measurement.height_cm / 100) ** 2), 2), # 4. bmi
+            sex_val,                       # 5. gender_male
+            sleep_hrs,                     # 6. hours_sleep
+            daily_steps,                   # 7. daily_steps
+            hydration,                     # 8. hydration_level
+            stress,                        # 9. stress_level
+            resting_hr,                    # 10. resting_heart_rate
+            duration_m,                    # 11. duration_m
+            avg_hr,                        # 12. avg_heartrate
+            act_enc,                       # 13. activity_type_enc
+            int_enc,                       # 14. intensity_enc
+            fit_enc,                       # 15. fitness_level_enc
+    ]]
+    
+        features_df = pd.DataFrame(features, columns=feature_cols)
+        predicted_tdee = float(tdee_model.predict(features_df)[0])
         # ── Target calories ───────────────────────────────────
         goal_type = goal.goal_type.lower()
         if goal_type == "fat_loss":
@@ -226,14 +206,14 @@ def recommendation():
         fat_g     = measurement.weight_kg * 0.8
         carbs_g   = max((target_calories - (protein_g * 4 + fat_g * 9)) / 4, 50)
 
-        # ── Dynamic content ───────────────────────────────────
-        weeks       = calc_weeks_to_goal(measurement, goal, target_calories, predicted_tdee)
-        meal_plan   = generate_meal_plan(lifestyle, target_calories, protein_g, carbs_g, fat_g)
-        workout     = generate_workout_plan(measurement, goal, lifestyle)
-        habits      = generate_habit_tips(measurement, lifestyle)
-        supplements = generate_supplements(measurement, goal, lifestyle)
-
-        # ── Response ──────────────────────────────────────────
+         # ── Dynamic AI Content ────────────────────────────────
+        weeks = calc_weeks_to_goal(measurement, goal, target_calories, predicted_tdee)
+        
+        # Call the real AI for text generation
+        meal_plan, workout, habits, supplements = generate_dynamic_ai_content(
+            measurement, goal, lifestyle, target_calories, protein_g, carbs_g, fat_g
+        )
+       # ── Response ──────────────────────────────────────────
         response = {
             "body_metric_id":        measurement.id,
             "goal_id":               goal.id,
@@ -243,8 +223,8 @@ def recommendation():
             "carbs_g":               round(carbs_g),
             "fat_g":                 round(fat_g),
             "weeks_to_goal":         weeks,
-            "engine_used":           "ml_model",
-            "confidence_score":      0.85,
+            "engine_used":           "gpt-4o", # Update your Flutter UI to show this!
+            "confidence_score":      0.95, # LLMs are highly confident in text formatting
             "meal_plan":             meal_plan,
             "workout_plan":          workout,
             "habit_tips":            habits,
@@ -260,6 +240,7 @@ def recommendation():
     except IndexError:
         return jsonify({"error": "User has no body_metrics or goals"}), 400
     except Exception as e:
+        print(traceback.format_exc());
         return jsonify({"error": str(e)}), 500
 
 

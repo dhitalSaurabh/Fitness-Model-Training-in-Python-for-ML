@@ -1,0 +1,5 @@
+# .gitignore
+.env
+venv/
+models/*.pkl
+__pycache__/
