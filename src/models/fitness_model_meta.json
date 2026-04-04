@@ -1,0 +1,41 @@
+{
+  "input_cols": [
+    "Gender",
+    "Goal",
+    "BMI Category"
+  ],
+  "target_cols": [
+    "Exercise Schedule",
+    "Meal Plan"
+  ],
+  "input_classes": {
+    "Gender": [
+      "Female",
+      "Male"
+    ],
+    "Goal": [
+      "fat_burn",
+      "muscle_gain"
+    ],
+    "BMI Category": [
+      "Normal weight",
+      "Obesity",
+      "Overweight",
+      "Underweight"
+    ]
+  },
+  "target_classes": {
+    "Exercise Schedule": [
+      "High-intensity interval training (HIIT), Cardio, and 8000 steps walking",
+      "Light weightlifting, Yoga, and 2000 steps walking",
+      "Low-impact cardio, Swimming, and 10000 steps walking",
+      "Moderate cardio, Strength training, and 5000 steps walking"
+    ],
+    "Meal Plan": [
+      "Balanced diet with moderate protein and carbohydrates: Chicken breast, brown rice, spinach, eggs, apple",
+      "High-calorie, protein-rich diet: Whole milk, peanut butter, eggs, salmon, sweet potatoes",
+      "Low-calorie, nutrient-dense diet with portion control: carrot sticks,grilled chicken breast,steamed broccoli, Greek yogurt, mixed nuts, baked salmon, leafy greens, roasted sweet potatoes",
+      "Low-carb, high-fiber diet: Avocado, grilled fish, broccoli, almonds, leafy greens"
+    ]
+  }
+}
