@@ -1,4 +1,6 @@
 {
+  "algorithm": "RandomForest",
+  "avg_accuracy": 1.0,
   "input_cols": [
     "Gender",
     "Goal",
