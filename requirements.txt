@@ -4,3 +4,4 @@ scikit-learn
 numpy
 fastapi
 gunicorn
+python-dotenv
